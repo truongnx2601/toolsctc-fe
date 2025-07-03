@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
@@ -18,26 +17,28 @@ interface ResultRecord {
 function App() {
   const [fileCTC, setFileCTC] = useState<File | null>(null);
   const [fileQAS, setFileQAS] = useState<File | null>(null);
+  const [dupFile, setDupFile] = useState<File | null>(null);
   const [data, setData] = useState<ResultRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [apiType, setApiType] = useState<'ctc' | 'pm'>('ctc');
+  const [apiType, setApiType] = useState<'ctc' | 'pm' | 'dup'>('ctc');
+  const [isPopupOpen, setIsPopupOpen] = useState(false);
 
   const handleSubmit = async (type: 'ctc' | 'pm') => {
     if (!fileCTC || !fileQAS) {
       toast.error("Vui lòng chọn đủ 2 file Excel!");
       return;
     }
-  
+
     const formData = new FormData();
     formData.append("fileCTC", fileCTC);
     formData.append("fileQAS", fileQAS);
-  
+
     try {
       setLoading(true);
       const endpoint = type === 'ctc' ? 'checkctc' : 'checkpm';
-      console.log(type);
       const response = await axios.post(`${import.meta.env.VITE_API_URL}/${endpoint}`, formData);
       setData(response.data);
+      setApiType(type);
       toast.success("Đối chiếu thành công!");
     } catch (err) {
       toast.error("Đã xảy ra lỗi khi xử lý.");
@@ -48,32 +49,49 @@ function App() {
 
   const handleExport = () => {
     const ws = XLSX.utils.json_to_sheet(data);
-  
-    // Tính độ rộng tối đa mỗi cột
+
     const colWidths = Object.keys(data[0] || {}).map((key) => {
       const maxLen = Math.max(
         key.length,
         ...data.map((row) => (row[key as keyof typeof row]?.toString().length || 0))
       );
-      return { wch: maxLen + 2 }; // +2 cho khoảng trống
+      return { wch: maxLen + 2 };
     });
-  
     ws["!cols"] = colWidths;
-  
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Kết quả");
-  
+
     const now = new Date();
-    const timestamp = now.toLocaleString("vi-VN", {
-      hour12: false,
-    }).replace(/[^0-9]/g, "");
-  
+    const timestamp = now.toLocaleString("vi-VN", { hour12: false }).replace(/[^0-9]/g, "");
     const filename = `ketqua-${apiType}-${timestamp}.xlsx`;
-  
+
     const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     saveAs(new Blob([wbout], { type: "application/octet-stream" }), filename);
   };
-  
+
+  const handleDuplicateCheck = async () => {
+    if (!dupFile) {
+      toast.error("Vui lòng chọn file Excel!");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", dupFile);
+
+    try {
+      setLoading(true);
+      const response = await axios.post(`${import.meta.env.VITE_API_URL}/checkdup`, formData);
+      setData(response.data);
+      setApiType("dup");
+      toast.success("Kiểm tra trùng thành công!");
+      setIsPopupOpen(false);
+    } catch (err) {
+      toast.error("Lỗi khi kiểm tra trùng dữ liệu.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen p-6 bg-gray-100">
@@ -82,7 +100,9 @@ function App() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label className="block font-medium mb-1 text-gray-700">File CTC <span className="text-red-500">*</span></label>
+          <label className="block font-medium mb-1 text-gray-700">
+            File CTC <span className="text-red-500">*</span>
+          </label>
           <input
             type="file"
             accept=".xlsx,.xls"
@@ -93,7 +113,9 @@ function App() {
         </div>
 
         <div>
-          <label className="block font-medium mb-1 text-gray-700">File PM <span className="text-red-500">*</span></label>
+          <label className="block font-medium mb-1 text-gray-700">
+            File PM <span className="text-red-500">*</span>
+          </label>
           <input
             type="file"
             accept=".xlsx,.xls"
@@ -107,19 +129,21 @@ function App() {
       <div className="flex gap-4 mb-4">
         <button
           className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
-          onClick={() => {
-            handleSubmit("ctc");
-          }}
+          onClick={() => handleSubmit("ctc")}
         >
           Check CTC
         </button>
         <button
           className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded"
-          onClick={() => {
-            handleSubmit("pm");
-          }}
+          onClick={() => handleSubmit("pm")}
         >
           Check PM
+        </button>
+        <button
+          className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded"
+          onClick={() => setIsPopupOpen(true)}
+        >
+          Check Trùng
         </button>
         {data.length > 0 && (
           <button
@@ -161,6 +185,35 @@ function App() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Popup */}
+      {isPopupOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+            <h2 className="text-xl font-bold mb-4">Kiểm tra dữ liệu trùng</h2>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => setDupFile(e.target.files?.[0] || null)}
+              className="block w-full mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                className="bg-gray-400 hover:bg-gray-500 text-white px-4 py-2 rounded"
+                onClick={() => setIsPopupOpen(false)}
+              >
+                Hủy
+              </button>
+              <button
+                className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded"
+                onClick={handleDuplicateCheck}
+              >
+                Kiểm tra
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
